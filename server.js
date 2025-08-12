@@ -935,6 +935,9 @@ app.post('/api/chat', async (req, res) => {
     messages.push({ role: 'user', content: prompt });
 
     // Call Anthropic API
+    console.log('🔑 API Key exists:', !!process.env.ANTHROPIC_API_KEY);
+    console.log('🔑 API Key preview:', process.env.ANTHROPIC_API_KEY ? process.env.ANTHROPIC_API_KEY.substring(0, 20) + '...' : 'NOT SET');
+    
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -943,7 +946,7 @@ app.post('/api/chat', async (req, res) => {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-3-5-sonnet-20241022',
+        model: 'claude-opus-4-1-20250805',
         max_tokens: maxTokens,
         messages: messages
       })
