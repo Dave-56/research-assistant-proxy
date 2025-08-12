@@ -14,7 +14,7 @@ async function testProxy() {
 
     // Test summary endpoint
     console.log('1. Testing summary generation:');
-    const summaryResponse = await fetch('http://localhost:3000/api/summary', {
+    const summaryResponse = await fetch('https://research-assistant-proxy.onrender.com/api/summary', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -22,7 +22,7 @@ async function testProxy() {
       body: JSON.stringify({
         content: testContent,
         pageTitle: 'AI Article',
-        pageUrl: 'https://example.com/ai-article',
+        pageUrl: 'https://www.quantamagazine.org/what-does-it-mean-to-be-thirsty-20250811/',
         type: 'summary'
       })
     });
