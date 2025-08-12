@@ -350,6 +350,25 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Research Assistant Proxy is running' });
 });
 
+// Configuration status endpoint (for debugging)
+app.get('/api/config-status', (req, res) => {
+  res.json({
+    status: 'ok',
+    environment: process.env.NODE_ENV || 'not set',
+    configured: {
+      anthropic: !!process.env.ANTHROPIC_API_KEY,
+      openai: !!process.env.OPENAI_API_KEY,
+      supabaseUrl: !!process.env.SUPABASE_URL,
+      supabaseKey: !!process.env.SUPABASE_ANON_KEY,
+      port: process.env.PORT || 3000
+    },
+    supabase: {
+      url: process.env.SUPABASE_URL ? 'configured' : 'missing',
+      hasAnonKey: !!process.env.SUPABASE_ANON_KEY
+    }
+  });
+});
+
 // AI Summary endpoint
 app.post('/api/summary', async (req, res) => {
   try {
