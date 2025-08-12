@@ -325,6 +325,26 @@ async function generateAISummary(prompt, maxTokens = 400) {
   }
 }
 
+// Root endpoint - API information
+app.get('/', (req, res) => {
+  res.json({
+    name: 'Research Assistant Proxy API',
+    version: '1.0.0',
+    status: 'online',
+    message: 'API server for Research Assistant Chrome Extension',
+    documentation: {
+      health: 'GET /health - Health check endpoint',
+      summary: 'POST /api/summary - Generate AI summaries',
+      chat: 'POST /api/chat - Chat with AI assistant',
+      recentContent: 'POST /api/recent-content - Analyze recent saved content',
+      contentSearch: 'POST /api/content-search - Search through saved content',
+      classification: 'POST /api/classify-conversation - Classify conversation intent'
+    },
+    repository: 'https://github.com/Dave-56/research-assistant-proxy',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Research Assistant Proxy is running' });
