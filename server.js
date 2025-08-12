@@ -37,8 +37,10 @@ app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' })); // Increase limit for large content
 
 // Trust proxy headers when running in production (required for Render)
+// Set to the specific number of proxies between the server and the client
+// For Render, this is typically 1
 if (process.env.NODE_ENV === 'production') {
-  app.set('trust proxy', true);
+  app.set('trust proxy', 1);
 }
 
 // Rate limiting: 100 requests per 15 minutes per IP
@@ -48,6 +50,17 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  // Use the first IP in X-Forwarded-For when behind proxy
+  keyGenerator: (req) => {
+    if (process.env.NODE_ENV === 'production') {
+      // In production, use the X-Forwarded-For header
+      return req.headers['x-forwarded-for']?.split(',')[0].trim() || 
+             req.connection.remoteAddress || 
+             'unknown';
+    }
+    // In development, use the default
+    return req.ip;
+  },
   // Skip rate limiting in development
   skip: () => process.env.NODE_ENV === 'development'
 });
