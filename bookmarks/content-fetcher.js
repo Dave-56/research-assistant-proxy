@@ -1,6 +1,6 @@
 // Background content fetcher for imported bookmarks
 const { createClient } = require('@supabase/supabase-js');
-const fetch = require('node-fetch');
+// Node.js 22 has native fetch, no need to import
 const { JSDOM } = require('jsdom');
 const { Readability } = require('@mozilla/readability');
 
