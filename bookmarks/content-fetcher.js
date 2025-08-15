@@ -216,13 +216,23 @@ class BookmarkContentFetcher {
 
   // Update batch statistics
   async updateBatchStats(batchId, succeeded, failed) {
-    const { error } = await this.supabase.rpc('update_batch_stats', {
-      batch_id: batchId,
-      completed_count: succeeded,
-      failed_count: failed
-    });
+    try {
+      // Use direct SQL UPDATE instead of stored procedure
+      const { error } = await this.supabase
+        .from('import_batches')
+        .update({
+          fetch_completed: succeeded,
+          fetch_failed: failed,
+          fetch_pending: 0 // All processed now
+        })
+        .eq('id', batchId);
 
-    if (error) {
+      if (error) {
+        console.error('Error updating batch stats:', error);
+      } else {
+        console.log(`📊 Updated batch stats: ${succeeded} completed, ${failed} failed`);
+      }
+    } catch (error) {
       console.error('Error updating batch stats:', error);
     }
   }
