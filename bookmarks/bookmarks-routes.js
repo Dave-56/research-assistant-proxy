@@ -88,6 +88,8 @@ router.post('/import-batch', authenticate, async (req, res) => {
     const { totalBookmarks, options } = req.body;
     const userId = req.user.id;
 
+    console.log(`📦 Creating import batch for user ${userId} with ${totalBookmarks} bookmarks`);
+
     const { data: batch, error } = await supabase
       .from('import_batches')
       .insert({
@@ -104,6 +106,7 @@ router.post('/import-batch', authenticate, async (req, res) => {
       .single();
 
     if (error) {
+      console.error('❌ Failed to create import batch:', error);
       if (error.code === 'PGRST116') {
         return res.status(404).json({ 
           success: false, 
@@ -113,6 +116,7 @@ router.post('/import-batch', authenticate, async (req, res) => {
       throw error;
     }
 
+    console.log(`✅ Import batch created with ID: ${batch.id}`);
     res.json({ success: true, batch });
   } catch (error) {
     console.error('Error creating import batch:', error);
@@ -129,7 +133,10 @@ router.post('/import', authenticate, async (req, res) => {
     const { bookmarks, batchId, generateSummaries } = req.body;
     const userId = req.user.id;
 
+    console.log(`📚 Importing ${bookmarks?.length || 0} bookmarks for batch ${batchId}`);
+
     if (!bookmarks || !Array.isArray(bookmarks)) {
+      console.error('❌ Invalid bookmarks data provided');
       return res.status(400).json({ error: 'Bookmarks array is required' });
     }
 
@@ -146,6 +153,8 @@ router.post('/import', authenticate, async (req, res) => {
       temp_preview: null
     }));
 
+    console.log(`📝 Prepared ${records.length} bookmark records for insertion`);
+
     // Bulk insert
     const { data: imported, error } = await supabase
       .from('imported_bookmarks')
@@ -153,6 +162,7 @@ router.post('/import', authenticate, async (req, res) => {
       .select();
 
     if (error) {
+      console.error('❌ Failed to insert bookmarks:', error);
       if (error.code === 'PGRST116') {
         return res.status(404).json({ 
           success: false, 
@@ -162,19 +172,23 @@ router.post('/import', authenticate, async (req, res) => {
       throw error;
     }
 
+    console.log(`✅ Successfully imported ${imported.length} bookmarks`);
+
     // Update batch progress if batchId provided
     if (batchId) {
+      console.log(`📊 Updating batch ${batchId} with import count`);
       const { error: updateError } = await supabase
         .from('import_batches')
         .update({ 
-          processed_bookmarks: imported.length,
-          status: 'completed',
-          completed_at: new Date().toISOString()
+          imported_count: imported.length,
+          import_status: 'fetching_content'
         })
         .eq('id', batchId);
 
       if (updateError) {
-        console.error('Error updating batch:', updateError);
+        console.error('❌ Error updating batch:', updateError);
+      } else {
+        console.log('✅ Batch status updated to fetching_content');
       }
     }
 
@@ -261,25 +275,37 @@ router.post('/import-batch/:id/complete', authenticate, async (req, res) => {
     const userId = req.user.id;
     const batchId = req.params.id;
 
+    console.log(`🏁 Completing import batch ${batchId} for user ${userId}`);
+
+    // Get current bookmark count for this batch
+    const { count } = await supabase
+      .from('imported_bookmarks')
+      .select('*', { count: 'exact', head: true })
+      .eq('import_batch_id', batchId);
+
+    console.log(`📊 Found ${count} bookmarks in batch ${batchId}`);
+
     const { data, error } = await supabase
       .from('import_batches')
       .update({ 
         import_status: 'fetching_content',
-        imported_count: await supabase
-          .from('imported_bookmarks')
-          .select('*', { count: 'exact', head: true })
-          .eq('import_batch_id', batchId)
-          .then(r => r.count)
+        imported_count: count || 0
       })
       .eq('id', batchId)
       .eq('user_id', userId)
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('❌ Failed to complete batch:', error);
+      throw error;
+    }
+
+    console.log(`✅ Batch ${batchId} marked as complete, starting background content fetch`);
 
     // Start background content fetching
     setTimeout(() => {
+      console.log(`🔄 Starting background content fetching for batch ${batchId}`);
       contentFetcher.processPendingBookmarks(userId, batchId);
     }, 1000);
 
@@ -302,6 +328,8 @@ router.get('/import-batch/:id/progress', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
     const batchId = req.params.id;
+
+    console.log(`📊 Getting progress for batch ${batchId}`);
 
     // Get batch info
     const { data: batch, error: batchError } = await supabase
