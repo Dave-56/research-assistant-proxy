@@ -75,11 +75,17 @@ class PreProcessor {
     const ruleName = rule.name || 'unknown';
     stats.appliedRules.push(ruleName);
 
-    // Apply removal selectors
+    // Apply removal selectors with content preservation
     const removalSelectors = rule.getRemovalSelectors ? rule.getRemovalSelectors(url) : [];
     for (const selector of removalSelectors) {
       const elements = document.querySelectorAll(selector);
       elements.forEach(element => {
+        // Content preservation logic - don't remove if element has substantial content
+        if (this._shouldPreserveElement(element)) {
+          stats.removedElements.push(`${selector} (${rule.name}) - PRESERVED due to content`);
+          return; // Skip removal
+        }
+        
         stats.removedElements.push(`${selector} (${rule.name})`);
         element.remove();
       });
@@ -104,6 +110,12 @@ class PreProcessor {
       for (const selector of specificSelectors) {
         const elements = document.querySelectorAll(selector);
         elements.forEach(element => {
+          // Apply same content preservation logic
+          if (this._shouldPreserveElement(element)) {
+            stats.removedElements.push(`${selector} (${rule.name}-specific) - PRESERVED due to content`);
+            return;
+          }
+          
           stats.removedElements.push(`${selector} (${rule.name}-specific)`);
           element.remove();
         });
@@ -234,6 +246,49 @@ class PreProcessor {
         element.removeAttribute(attr);
       });
     });
+  }
+
+  /**
+   * Determine if an element should be preserved despite matching removal rules
+   * @private
+   * @param {Element} element - The element to check
+   * @returns {boolean} True if element should be preserved
+   */
+  _shouldPreserveElement(element) {
+    // Always preserve main content areas
+    if (element.matches('[role="main"], main, #MainContent, .main-content, .content, article')) {
+      return true;
+    }
+    
+    // Preserve elements with substantial text content (likely main content)
+    const textContent = element.textContent.trim();
+    if (textContent.length > 300) {
+      // Check if it's not just repeated navigation/menu items
+      const words = textContent.split(/\s+/);
+      const uniqueWords = new Set(words.map(w => w.toLowerCase()));
+      const uniqueRatio = uniqueWords.size / words.length;
+      
+      // If text has good word variety (not repetitive nav), preserve it
+      if (uniqueRatio > 0.5 && words.length > 50) {
+        return true;
+      }
+    }
+    
+    // Preserve elements containing important structural content
+    const importantTags = element.querySelectorAll('h1, h2, h3, p, article, table');
+    if (importantTags.length >= 3) {
+      return true;
+    }
+    
+    // Preserve if element contains tables (likely data content)
+    if (element.querySelector('table')) {
+      const tableText = element.querySelector('table').textContent.trim();
+      if (tableText.length > 100) {
+        return true;
+      }
+    }
+    
+    return false;
   }
 
   /**

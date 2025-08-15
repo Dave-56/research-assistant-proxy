@@ -37,18 +37,18 @@ class BaseRules {
       '.social', '.social-media', '.social-links', '.share', '.sharing',
       '.follow', '.follow-us', '.social-follow',
       
-      // Advertisements
+      // Advertisements (be more specific to avoid false positives)
       '.ad', '.ads', '.advertisement', '.banner-ad', '.google-ad',
       '.adsense', '.ad-container', '.ad-wrapper', '.sponsored',
-      '[class*="ad-"]', '[id*="ad-"]', '[class*="ads-"]', '[id*="ads-"]',
+      '.ad-banner', '.ad-slot', '.ad-unit', '.ads-container',
       
       // Comments (often noisy)
       '.comments', '.comment-section', '.comment-list', '#comments',
       '.disqus', '.fb-comments', '.social-comments',
       
-      // Related content (often promotional)
-      '.related', '.related-posts', '.related-articles', '.related-content',
-      '.recommended', '.suggestions', '.more-stories',
+      // Related content (be specific to avoid main content)
+      '.related-posts', '.related-articles', '.related-sidebar',
+      '.recommended-posts', '.suggestions-sidebar', '.more-stories',
       
       // Pop-ups and overlays
       '.popup', '.pop-up', '.overlay', '.modal', '.lightbox',

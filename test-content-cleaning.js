@@ -31,13 +31,13 @@ const problematicHTML = `
     </div>
   </div>
   
-  <!-- ACTUAL CONTENT -->
+  <!-- ACTUAL CONTENT (should be preserved) -->
   <div role="main" id="MainContent">
     <h1>Summer Collection 2025</h1>
     <p>Discover our latest summer collection featuring premium fabrics and timeless designs. Each piece is carefully crafted to provide both comfort and style for the modern wardrobe.</p>
     
     <h2>Featured Items</h2>
-    <p>Our featured items this season include lightweight cotton shirts, linen pants, and sustainable accessories that complement any summer wardrobe.</p>
+    <p>Our featured items this season include lightweight cotton shirts, linen pants, and sustainable accessories that complement any summer wardrobe. We believe in creating pieces that transcend seasonal trends while maintaining exceptional quality and comfort. Each garment is designed with attention to detail and crafted using sustainable practices.</p>
     
     <table>
       <tr>
@@ -58,7 +58,15 @@ const problematicHTML = `
     </table>
     
     <h2>Sustainability</h2>
-    <p>We are committed to sustainable fashion practices, using only ethically sourced materials and supporting fair trade manufacturing processes.</p>
+    <p>We are committed to sustainable fashion practices, using only ethically sourced materials and supporting fair trade manufacturing processes. Our supply chain is carefully vetted to ensure workers are treated fairly and environmental impact is minimized.</p>
+    
+    <h3>Our Mission</h3>
+    <p>To create timeless fashion that respects both people and planet. Every piece in our collection tells a story of conscious design and responsible manufacturing.</p>
+  </div>
+  
+  <!-- This should be removed (matches rules but is small content) -->
+  <div class="related">
+    <span>Related</span>
   </div>
 </div>
 `;
