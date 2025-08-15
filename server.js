@@ -73,6 +73,305 @@ app.use('/auth', authRoutes);
 app.use('/api/storage', storageRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
 
+// Content cleaning metrics endpoint
+app.get('/api/metrics', (req, res) => {
+  try {
+    const { exportMetrics } = require('./bookmarks/content-cleaning/utils/metrics');
+    const metrics = exportMetrics();
+    
+    res.json({
+      success: true,
+      data: metrics,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error fetching metrics:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch cleaning metrics'
+    });
+  }
+});
+
+// Content cleaning metrics dashboard (HTML page)
+app.get('/metrics', (req, res) => {
+  res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Content Cleaning Metrics</title>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
+            max-width: 1200px; 
+            margin: 0 auto; 
+            padding: 20px; 
+            background: #f5f5f5;
+        }
+        .container { 
+            background: white; 
+            border-radius: 8px; 
+            padding: 30px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { 
+            color: #333; 
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .metric-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+            gap: 20px; 
+            margin-bottom: 30px;
+        }
+        .metric-card { 
+            background: #f8f9fa; 
+            padding: 20px; 
+            border-radius: 6px; 
+            border-left: 4px solid #007bff;
+        }
+        .metric-value { 
+            font-size: 2em; 
+            font-weight: bold; 
+            color: #007bff; 
+            margin-bottom: 5px;
+        }
+        .metric-label { 
+            color: #666; 
+            font-size: 0.9em;
+        }
+        .section { 
+            margin-bottom: 40px;
+        }
+        .section h2 { 
+            color: #444; 
+            border-bottom: 2px solid #eee; 
+            padding-bottom: 10px;
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin-top: 15px;
+        }
+        th, td { 
+            text-align: left; 
+            padding: 12px; 
+            border-bottom: 1px solid #eee;
+        }
+        th { 
+            background: #f8f9fa; 
+            font-weight: 600;
+        }
+        .status-indicator { 
+            width: 10px; 
+            height: 10px; 
+            border-radius: 50%; 
+            display: inline-block; 
+            margin-right: 8px;
+        }
+        .status-good { background: #28a745; }
+        .status-warning { background: #ffc107; }
+        .status-error { background: #dc3545; }
+        .refresh-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .refresh-btn:hover { background: #0056b3; }
+        .loading { opacity: 0.5; }
+        .error { color: #dc3545; padding: 20px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            🧹 Content Cleaning Metrics
+            <button class="refresh-btn" onclick="loadMetrics()">Refresh</button>
+        </h1>
+        
+        <div id="loading" style="text-align: center; padding: 40px;">
+            <div>Loading metrics...</div>
+        </div>
+        
+        <div id="content" style="display: none;">
+            <div class="metric-grid">
+                <div class="metric-card">
+                    <div class="metric-value" id="totalOperations">-</div>
+                    <div class="metric-label">Total Operations</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="successRate">-</div>
+                    <div class="metric-label">Success Rate</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="avgReduction">-</div>
+                    <div class="metric-label">Avg Size Reduction</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-value" id="avgTime">-</div>
+                    <div class="metric-label">Avg Cleaning Time</div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>🎯 Most Effective Rules</h2>
+                <table id="effectiveRules">
+                    <thead>
+                        <tr>
+                            <th>Rule Name</th>
+                            <th>Applications</th>
+                            <th>Avg Reduction</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            
+            <div class="section">
+                <h2>⚠️ Sites Needing Attention</h2>
+                <table id="problematicSites">
+                    <thead>
+                        <tr>
+                            <th>Hostname</th>
+                            <th>Error Rate</th>
+                            <th>Avg Reduction</th>
+                            <th>Total Operations</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            
+            <div class="section">
+                <h2>📊 Recent Activity</h2>
+                <div id="lastUpdate">Last updated: <span id="timestamp">-</span></div>
+            </div>
+        </div>
+        
+        <div id="error" class="error" style="display: none;">
+            Failed to load metrics. Is the content cleaning system running?
+        </div>
+    </div>
+
+    <script>
+        async function loadMetrics() {
+            const loading = document.getElementById('loading');
+            const content = document.getElementById('content');
+            const error = document.getElementById('error');
+            
+            loading.style.display = 'block';
+            content.style.display = 'none';
+            error.style.display = 'none';
+            
+            try {
+                const response = await fetch('/api/metrics');
+                const result = await response.json();
+                
+                if (!result.success) {
+                    throw new Error(result.error);
+                }
+                
+                const { summary, ruleEffectiveness, siteStats } = result.data;
+                
+                // Update summary metrics
+                document.getElementById('totalOperations').textContent = summary.totalOperations || 0;
+                document.getElementById('successRate').textContent = Math.round(summary.successRate || 0) + '%';
+                document.getElementById('avgReduction').textContent = Math.round(summary.averageReduction || 0) + '%';
+                document.getElementById('avgTime').textContent = (summary.averageCleaningTime || 0) + 'ms';
+                
+                // Update effective rules table
+                const rulesTable = document.getElementById('effectiveRules').querySelector('tbody');
+                rulesTable.innerHTML = '';
+                
+                if (ruleEffectiveness && ruleEffectiveness.length > 0) {
+                    ruleEffectiveness.slice(0, 10).forEach(rule => {
+                        const row = rulesTable.insertRow();
+                        const statusClass = rule.averageReduction > 30 ? 'status-good' : 
+                                          rule.averageReduction > 10 ? 'status-warning' : 'status-error';
+                        
+                        row.innerHTML = \`
+                            <td>\${rule.ruleName}</td>
+                            <td>\${rule.applications}</td>
+                            <td>\${Math.round(rule.averageReduction)}%</td>
+                            <td><span class="status-indicator \${statusClass}"></span>Active</td>
+                        \`;
+                    });
+                } else {
+                    rulesTable.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #666;">No rule data available yet</td></tr>';
+                }
+                
+                // Update problematic sites table
+                const sitesTable = document.getElementById('problematicSites').querySelector('tbody');
+                sitesTable.innerHTML = '';
+                
+                if (siteStats && siteStats.length > 0) {
+                    // Calculate problematic sites
+                    const problematicSites = siteStats
+                        .map(site => ({
+                            ...site,
+                            errorRate: site.errors / (site.cleanings + site.errors) * 100,
+                            totalOps: site.cleanings + site.errors
+                        }))
+                        .filter(site => site.errorRate > 10 || site.averageReduction < 20)
+                        .sort((a, b) => b.errorRate - a.errorRate)
+                        .slice(0, 10);
+                    
+                    if (problematicSites.length > 0) {
+                        problematicSites.forEach(site => {
+                            const row = sitesTable.insertRow();
+                            const statusClass = site.errorRate < 5 ? 'status-good' : 
+                                              site.errorRate < 20 ? 'status-warning' : 'status-error';
+                            
+                            row.innerHTML = \`
+                                <td>\${site.hostname}</td>
+                                <td>\${Math.round(site.errorRate)}%</td>
+                                <td>\${Math.round(site.averageReduction)}%</td>
+                                <td>\${site.totalOps}</td>
+                                <td><span class="status-indicator \${statusClass}"></span>Needs attention</td>
+                            \`;
+                        });
+                    } else {
+                        sitesTable.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #28a745;">🎉 All sites performing well!</td></tr>';
+                    }
+                } else {
+                    sitesTable.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #666;">No site data available yet</td></tr>';
+                }
+                
+                // Update timestamp
+                document.getElementById('timestamp').textContent = new Date(result.timestamp).toLocaleString();
+                
+                loading.style.display = 'none';
+                content.style.display = 'block';
+                
+            } catch (err) {
+                console.error('Error loading metrics:', err);
+                loading.style.display = 'none';
+                error.style.display = 'block';
+            }
+        }
+        
+        // Load metrics on page load
+        loadMetrics();
+        
+        // Auto-refresh every 30 seconds
+        setInterval(loadMetrics, 30000);
+    </script>
+</body>
+</html>
+  `);
+});
+
 // Embedding generation functions
 async function generateEmbedding(text) {
   try {

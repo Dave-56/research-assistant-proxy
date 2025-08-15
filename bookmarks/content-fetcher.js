@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js');
 // Node.js 22 has native fetch, no need to import
 const { JSDOM } = require('jsdom');
 const { Readability } = require('@mozilla/readability');
+const ContentCleaner = require('./content-cleaning/index');
 
 class BookmarkContentFetcher {
   constructor() {
@@ -12,6 +13,13 @@ class BookmarkContentFetcher {
     );
     this.processing = false;
     this.batchSize = 5; // Process 5 bookmarks at a time
+    
+    // Initialize content cleaner with debug mode based on environment
+    this.contentCleaner = new ContentCleaner({
+      enableMetrics: true,
+      enableContentScoring: true,
+      debugMode: process.env.NODE_ENV !== 'production'
+    });
   }
 
   // Start processing pending bookmarks for a user
@@ -110,8 +118,19 @@ class BookmarkContentFetcher {
 
       const html = await response.text();
 
-      // Parse with Readability
-      const dom = new JSDOM(html, { url: bookmark.url });
+      // Step 1: Clean HTML BEFORE Readability processing
+      console.log(`🧹 Cleaning HTML for: ${bookmark.title}`);
+      const cleaningResult = await this.contentCleaner.cleanContent(html, bookmark.url);
+      
+      if (!cleaningResult.success) {
+        console.log(`⚠️ Cleaning failed, using original HTML: ${cleaningResult.error}`);
+      } else {
+        console.log(`✨ Cleaned HTML: ${cleaningResult.preCleaningStats.reductionPercent}% size reduction`);
+      }
+
+      // Step 2: Parse with Readability using cleaned HTML
+      const cleanedHtml = cleaningResult.success ? cleaningResult.html : html;
+      const dom = new JSDOM(cleanedHtml, { url: bookmark.url });
       const reader = new Readability(dom.window.document);
       const article = reader.parse();
 
@@ -119,9 +138,14 @@ class BookmarkContentFetcher {
         throw new Error('Could not extract content from page');
       }
 
-      // Clean up the content
-      const cleanContent = this.cleanContent(article.content);
-      const preview = this.generatePreview(article.textContent || cleanContent);
+      // Step 3: Post-process the Readability content
+      const postProcessResult = await this.contentCleaner.postProcessContent(article.content, bookmark.url);
+      const finalContent = postProcessResult.success ? postProcessResult.content : article.content;
+      
+      // Generate preview from final content
+      const preview = this.generatePreview(finalContent);
+      
+      console.log(`📊 Content quality score: ${postProcessResult.qualityScore?.overall || 'N/A'}/100`);
 
       // Store in user_content table
       const { data: content, error: contentError } = await this.supabase
@@ -129,7 +153,7 @@ class BookmarkContentFetcher {
         .insert({
           user_id: bookmark.user_id,
           title: article.title || bookmark.title,
-          content_text: cleanContent,
+          content_text: finalContent,
           preview: preview,
           type: 'bookmark',
           source_url: bookmark.url,
@@ -174,41 +198,33 @@ class BookmarkContentFetcher {
     }
   }
 
-  // Clean HTML content
-  cleanContent(html) {
-    // Remove script and style tags
-    let clean = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-    clean = clean.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
-    
-    // Remove excessive whitespace
-    clean = clean.replace(/\s+/g, ' ');
-    clean = clean.replace(/\n{3,}/g, '\n\n');
-    
-    return clean.trim();
-  }
-
-  // Generate preview from content
+  // Generate preview from content (kept for compatibility)
   generatePreview(text, maxLength = 200) {
     if (!text) return '';
     
-    const cleaned = text.replace(/\s+/g, ' ').trim();
+    // Remove markdown formatting for preview
+    const plainText = text
+      .replace(/[#*`]/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Replace links with just text
+      .replace(/\s+/g, ' ')
+      .trim();
     
-    if (cleaned.length <= maxLength) {
-      return cleaned;
+    if (plainText.length <= maxLength) {
+      return plainText;
     }
     
     // Try to cut at sentence boundary
-    const truncated = cleaned.substring(0, maxLength);
+    const truncated = plainText.substring(0, maxLength);
     const lastPeriod = truncated.lastIndexOf('.');
     
     if (lastPeriod > 100) {
-      return cleaned.substring(0, lastPeriod + 1);
+      return plainText.substring(0, lastPeriod + 1);
     }
     
     // Fall back to word boundary
     const lastSpace = truncated.lastIndexOf(' ');
     if (lastSpace > 100) {
-      return cleaned.substring(0, lastSpace) + '...';
+      return plainText.substring(0, lastSpace) + '...';
     }
     
     return truncated + '...';
@@ -280,6 +296,22 @@ class BookmarkContentFetcher {
     };
 
     return progress;
+  }
+
+  // Get content cleaning metrics and statistics
+  getCleaningMetrics() {
+    return this.contentCleaner.getStats();
+  }
+
+  // Log cleaning metrics summary
+  logCleaningMetrics() {
+    const { logSummary } = require('./content-cleaning/utils/metrics');
+    logSummary();
+  }
+
+  // Add custom cleaning rule (for site-specific improvements)
+  addCleaningRule(rule) {
+    this.contentCleaner.addRule(rule);
   }
 }
 
