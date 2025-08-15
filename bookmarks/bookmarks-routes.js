@@ -93,8 +93,12 @@ router.post('/import-batch', authenticate, async (req, res) => {
       .insert({
         user_id: userId,
         total_bookmarks: totalBookmarks,
-        options: options || {},
-        status: 'in_progress'
+        imported_count: 0,
+        fetch_pending: totalBookmarks,
+        fetch_completed: 0,
+        fetch_failed: 0,
+        import_status: 'importing',
+        notify_on_complete: true
       })
       .select()
       .single();
@@ -129,19 +133,17 @@ router.post('/import', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Bookmarks array is required' });
     }
 
-    // Prepare bookmark records
+    // Prepare bookmark records for new schema
     const records = bookmarks.map(bookmark => ({
       user_id: userId,
-      chrome_id: bookmark.chromeId,
-      parent_chrome_id: bookmark.parentChromeId || null,
       title: bookmark.title || 'Untitled',
       url: bookmark.url,
       folder_path: bookmark.folderPath || '',
       date_added: bookmark.dateAdded ? new Date(bookmark.dateAdded).toISOString() : new Date().toISOString(),
       import_batch_id: batchId || null,
-      tags: bookmark.tags || [],
-      processing_status: generateSummaries ? 'pending' : 'completed',
-      is_folder: false
+      fetch_status: 'pending', // Always pending, will fetch content in background
+      temp_content: null,
+      temp_preview: null
     }));
 
     // Bulk insert
