@@ -1,12 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const { createClient } = require('@supabase/supabase-js');
+const BookmarkContentFetcher = require('./content-fetcher');
 
 // Initialize Supabase client
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
+
+// Initialize content fetcher
+const contentFetcher = new BookmarkContentFetcher();
 
 // Middleware to verify authentication
 const authenticate = async (req, res, next) => {
@@ -249,7 +253,7 @@ router.delete('/imported/:id', authenticate, async (req, res) => {
   }
 });
 
-// Complete import batch
+// Complete import batch and start content fetching
 router.post('/import-batch/:id/complete', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
@@ -258,8 +262,12 @@ router.post('/import-batch/:id/complete', authenticate, async (req, res) => {
     const { data, error } = await supabase
       .from('import_batches')
       .update({ 
-        status: 'completed',
-        completed_at: new Date().toISOString()
+        import_status: 'fetching_content',
+        imported_count: await supabase
+          .from('imported_bookmarks')
+          .select('*', { count: 'exact', head: true })
+          .eq('import_batch_id', batchId)
+          .then(r => r.count)
       })
       .eq('id', batchId)
       .eq('user_id', userId)
@@ -268,9 +276,119 @@ router.post('/import-batch/:id/complete', authenticate, async (req, res) => {
 
     if (error) throw error;
 
-    res.json({ success: true, batch: data });
+    // Start background content fetching
+    setTimeout(() => {
+      contentFetcher.processPendingBookmarks(userId, batchId);
+    }, 1000);
+
+    res.json({ 
+      success: true, 
+      batch: data,
+      message: 'Import complete, fetching content in background'
+    });
   } catch (error) {
     console.error('Error completing batch:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get batch progress
+router.get('/import-batch/:id/progress', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const batchId = req.params.id;
+
+    // Get batch info
+    const { data: batch, error: batchError } = await supabase
+      .from('import_batches')
+      .select('*')
+      .eq('id', batchId)
+      .eq('user_id', userId)
+      .single();
+
+    if (batchError) throw batchError;
+
+    // Get bookmark counts by status
+    const { data: statusCounts, error: countError } = await supabase
+      .from('imported_bookmarks')
+      .select('fetch_status')
+      .eq('import_batch_id', batchId);
+
+    if (countError) throw countError;
+
+    const counts = statusCounts.reduce((acc, item) => {
+      acc[item.fetch_status] = (acc[item.fetch_status] || 0) + 1;
+      return acc;
+    }, {});
+
+    const progress = {
+      batchId: batchId,
+      status: batch.import_status,
+      total: batch.total_bookmarks,
+      imported: batch.imported_count || 0,
+      fetchPending: counts.pending || 0,
+      fetchInProgress: counts.fetching || 0,
+      fetchCompleted: counts.completed || 0,
+      fetchFailed: counts.failed || 0,
+      percentComplete: batch.total_bookmarks > 0 
+        ? Math.round(((counts.completed || 0) + (counts.failed || 0)) / batch.total_bookmarks * 100)
+        : 0,
+      isComplete: batch.import_status === 'completed'
+    };
+
+    res.json({ success: true, progress });
+  } catch (error) {
+    console.error('Error getting batch progress:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Retry failed content fetches
+router.post('/import-batch/:id/retry-failed', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const batchId = req.params.id;
+
+    // Reset failed bookmarks to pending
+    const { data: reset, error } = await supabase
+      .from('imported_bookmarks')
+      .update({ 
+        fetch_status: 'pending',
+        fetch_error: null
+      })
+      .eq('import_batch_id', batchId)
+      .eq('user_id', userId)
+      .eq('fetch_status', 'failed')
+      .select();
+
+    if (error) throw error;
+
+    if (reset && reset.length > 0) {
+      // Restart content fetching
+      setTimeout(() => {
+        contentFetcher.processPendingBookmarks(userId, batchId);
+      }, 1000);
+
+      res.json({ 
+        success: true, 
+        retrying: reset.length,
+        message: `Retrying ${reset.length} failed bookmarks`
+      });
+    } else {
+      res.json({ 
+        success: true, 
+        retrying: 0,
+        message: 'No failed bookmarks to retry'
+      });
+    }
+  } catch (error) {
+    console.error('Error retrying failed fetches:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 

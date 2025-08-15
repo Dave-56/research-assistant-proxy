@@ -1,3 +1,14 @@
+-- Script to drop existing bookmark tables and recreate with new schema
+-- Run this in Supabase SQL Editor
+
+-- Step 1: Drop existing tables (CASCADE will remove dependent objects)
+DROP TABLE IF EXISTS imported_bookmarks CASCADE;
+DROP TABLE IF EXISTS import_batches CASCADE;
+
+-- Step 2: Drop any views that might exist
+DROP VIEW IF EXISTS bookmark_stats CASCADE;
+
+-- Step 3: Now create the new schema
 -- Minimal Bookmark Import Schema for MVP with Background Processing
 -- Optimized for fast import + background content fetching
 
