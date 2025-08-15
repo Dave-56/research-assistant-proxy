@@ -7,6 +7,7 @@ const OpenAI = require('openai');
 // Import Supabase routes
 const { router: authRoutes, requireAuth } = require('./supabase/auth-routes');
 const storageRoutes = require('./supabase/storage-routes');
+const bookmarkRoutes = require('./bookmarks/bookmarks-routes');
 const SupabaseStorageService = require('./supabase/storage-service');
 
 const app = express();
@@ -70,6 +71,7 @@ app.use('/api/', limiter);
 // Register Supabase routes
 app.use('/auth', authRoutes);
 app.use('/api/storage', storageRoutes);
+app.use('/api/bookmarks', bookmarkRoutes);
 
 // Embedding generation functions
 async function generateEmbedding(text) {
@@ -909,6 +911,100 @@ app.post('/api/generate-embeddings', async (req, res) => {
   }
 });
 
+// Intent classification endpoint - lightweight, signal-based classification
+app.post('/api/classify-intent', async (req, res) => {
+  try {
+    const { message, signals } = req.body;
+    
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+    
+    console.log('🎯 Classifying intent for:', message.substring(0, 50) + '...');
+    console.log('📊 Signals:', signals);
+    
+    // Build a minimal prompt for classification
+    const prompt = `Classify the user's intent based on these signals.
+
+User message: "${message}"
+
+Signals:
+- Has conversation history: ${signals.hasHistory}
+- Message length: ${signals.messageLength}
+- Starts with verb: ${signals.startsWithVerb}
+- Contains tab reference: ${signals.containsTabReference}
+- Contains question word: ${signals.containsQuestionWord}
+- Contains save words: ${signals.containsSaveWords}
+- Contains search words: ${signals.containsSearchWords}
+
+Intent types:
+- general: General questions or chat
+- follow_up: Continuing from previous message
+- tab_specific: Asking about a specific browser tab
+- content_search: Looking for something in saved content
+- action_bookmark: User wants to bookmark/save something
+- analysis: Wants analysis or insights
+
+Based on the signals, classify the intent. Return ONLY the intent type and confidence score.
+Format: intent_type|confidence(0-1)
+Example: content_search|0.85
+
+Classification:`;
+
+    // Use minimal tokens for classification
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4-1-20250805',
+        max_tokens: 20, // Very small - just need the classification
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!response.ok) {
+      console.error('Classification API error');
+      return res.json({ 
+        intent: 'general',
+        confidence: 0.5,
+        method: 'fallback'
+      });
+    }
+
+    const data = await response.json();
+    const result = data.content?.[0]?.text?.trim();
+    
+    if (result) {
+      const [intent, confidence] = result.split('|');
+      return res.json({
+        success: true,
+        intent: intent.trim(),
+        confidence: parseFloat(confidence) || 0.8,
+        method: 'ai'
+      });
+    }
+    
+    // Fallback to general
+    return res.json({ 
+      intent: 'general',
+      confidence: 0.5,
+      method: 'fallback'
+    });
+    
+  } catch (error) {
+    console.error('Classification error:', error);
+    return res.json({ 
+      intent: 'general',
+      confidence: 0.5,
+      method: 'error'
+    });
+  }
+});
+
 // Chat endpoint
 app.post('/api/chat', async (req, res) => {
   try {
@@ -971,7 +1067,8 @@ app.post('/api/chat', async (req, res) => {
           }
         }
       } catch (e) {
-        // If error parsing fails, use generic message
+        // If error parsing fails, use generic message]
+        console.log("Error in chat api endpoint", e)
       }
       
       return res.status(response.status).json({ 
