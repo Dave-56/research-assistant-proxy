@@ -1304,6 +1304,76 @@ Classification:`;
   }
 });
 
+// PDF extraction endpoint for on-demand extraction
+app.post('/api/extract-pdf', async (req, res) => {
+  try {
+    const { url, userId } = req.body;
+    
+    if (!url) {
+      return res.status(400).json({ error: 'PDF URL is required' });
+    }
+    
+    console.log(`📄 PDF extraction request for: ${url}`);
+    
+    // Initialize PDF extractor
+    const PDFExtractor = require('./pdf-extractor');
+    const pdfExtractor = new PDFExtractor();
+    
+    // Check if it's actually a PDF
+    if (!PDFExtractor.isPDFURL(url)) {
+      return res.status(400).json({ 
+        error: 'URL does not appear to be a PDF',
+        suggestion: 'Please provide a direct PDF URL'
+      });
+    }
+    
+    // Extract PDF content
+    const result = await pdfExtractor.extractFromURL(url);
+    
+    if (!result.success) {
+      return res.status(500).json({
+        error: result.error || 'Failed to extract PDF content',
+        fallbackText: result.fallbackText
+      });
+    }
+    
+    // Optionally save to database if userId provided
+    if (userId && process.env.SUPABASE_URL) {
+      try {
+        const { data: saved } = await supabaseStorage.saveContent(userId, {
+          title: result.metadata?.info?.Title || 'PDF Document',
+          content: result.text,
+          preview: result.preview,
+          type: 'pdf',
+          content_type: 'pdf',
+          source: { url, hostname: new URL(url).hostname },
+          metadata: result.metadata
+        });
+        
+        console.log(`💾 PDF content saved for user ${userId}`);
+      } catch (saveError) {
+        console.error('Failed to save PDF content:', saveError);
+        // Continue - extraction succeeded even if save failed
+      }
+    }
+    
+    res.json({
+      success: true,
+      text: result.text,
+      preview: result.preview,
+      metadata: result.metadata,
+      message: `Successfully extracted ${result.metadata.pages} pages from PDF`
+    });
+    
+  } catch (error) {
+    console.error('PDF extraction error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
 // Chat endpoint
 app.post('/api/chat', async (req, res) => {
   try {

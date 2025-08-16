@@ -5,6 +5,7 @@ const { JSDOM } = require('jsdom');
 const { Readability } = require('@mozilla/readability');
 const ContentCleaner = require('./content-cleaning/index');
 const ContentTypeDetector = require('./content-type-detector');
+const PDFExtractor = require('../pdf-extractor');
 
 class BookmarkContentFetcher {
   constructor() {
@@ -24,6 +25,9 @@ class BookmarkContentFetcher {
     
     // Initialize content type detector
     this.typeDetector = new ContentTypeDetector();
+    
+    // Initialize PDF extractor
+    this.pdfExtractor = new PDFExtractor();
   }
 
   // Start processing pending bookmarks for a user
@@ -108,7 +112,16 @@ class BookmarkContentFetcher {
         .update({ fetch_status: 'fetching' })
         .eq('id', bookmark.id);
 
-      // Fetch the page
+      // Check if this is a PDF URL first
+      const isPDF = PDFExtractor.isPDFURL(bookmark.url);
+      
+      if (isPDF) {
+        // Handle PDF extraction
+        console.log(`📄 Detected PDF URL: ${bookmark.url}`);
+        return await this.processPDFBookmark(bookmark);
+      }
+
+      // Fetch the page for non-PDF content
       const response = await fetch(bookmark.url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (compatible; Glance/1.0; +https://glance.app)'
@@ -230,6 +243,80 @@ class BookmarkContentFetcher {
         .update({
           fetch_status: 'failed',
           fetch_error: error.message.substring(0, 500)
+        })
+        .eq('id', bookmark.id);
+
+      return { success: false, bookmarkId: bookmark.id, error: error.message };
+    }
+  }
+
+  // Process PDF bookmark
+  async processPDFBookmark(bookmark) {
+    try {
+      console.log(`📄 Processing PDF: ${bookmark.title}`);
+      
+      // Extract PDF content
+      const pdfResult = await this.pdfExtractor.extractFromURL(bookmark.url);
+      
+      if (!pdfResult.success) {
+        throw new Error(pdfResult.error || 'PDF extraction failed');
+      }
+      
+      // Store in user_content table
+      const { data: content, error: contentError } = await this.supabase
+        .from('user_content')
+        .insert({
+          user_id: bookmark.user_id,
+          title: pdfResult.metadata?.info?.Title || bookmark.title,
+          content_text: pdfResult.text,
+          preview: pdfResult.preview,
+          type: 'bookmark',
+          content_type: 'pdf', // Mark as PDF content type
+          source_url: bookmark.url,
+          source_hostname: new URL(bookmark.url).hostname,
+          source_title: bookmark.title,
+          timestamp: Date.now(),
+          is_readable: true,
+          metadata: {
+            contentType: 'pdf',
+            pdfInfo: {
+              pages: pdfResult.metadata.pages,
+              fileSize: pdfResult.metadata.fileSize,
+              info: pdfResult.metadata.info,
+              extractionMethod: pdfResult.metadata.extractionMethod,
+              extractedAt: new Date().toISOString()
+            }
+          }
+        })
+        .select()
+        .single();
+
+      if (contentError) throw contentError;
+
+      // Update bookmark with content reference
+      await this.supabase
+        .from('imported_bookmarks')
+        .update({
+          fetch_status: 'completed',
+          fetched_at: new Date().toISOString(),
+          content_id: content.id
+        })
+        .eq('id', bookmark.id);
+
+      console.log(`✅ PDF content extracted and saved: ${bookmark.title}`);
+      console.log(`📊 PDF stats: ${pdfResult.metadata.pages} pages, ${Math.round(pdfResult.metadata.fileSize / 1024)}KB`);
+      
+      return { success: true, bookmarkId: bookmark.id, contentId: content.id };
+      
+    } catch (error) {
+      console.error(`❌ Failed to process PDF ${bookmark.url}:`, error.message);
+      
+      // Update bookmark with error
+      await this.supabase
+        .from('imported_bookmarks')
+        .update({
+          fetch_status: 'failed',
+          fetch_error: `PDF extraction failed: ${error.message.substring(0, 500)}`
         })
         .eq('id', bookmark.id);
 
