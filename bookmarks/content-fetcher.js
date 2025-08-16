@@ -4,6 +4,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { JSDOM } = require('jsdom');
 const { Readability } = require('@mozilla/readability');
 const ContentCleaner = require('./content-cleaning/index');
+const ContentTypeDetector = require('./content-type-detector');
 
 class BookmarkContentFetcher {
   constructor() {
@@ -20,6 +21,9 @@ class BookmarkContentFetcher {
       enableContentScoring: true,
       debugMode: process.env.NODE_ENV !== 'production'
     });
+    
+    // Initialize content type detector
+    this.typeDetector = new ContentTypeDetector();
   }
 
   // Start processing pending bookmarks for a user
@@ -118,51 +122,86 @@ class BookmarkContentFetcher {
 
       const html = await response.text();
 
-      // Step 1: Clean HTML BEFORE Readability processing
-      console.log(`🧹 Cleaning HTML for: ${bookmark.title}`);
-      const cleaningResult = await this.contentCleaner.cleanContent(html, bookmark.url);
-      
-      if (!cleaningResult.success) {
-        console.log(`⚠️ Cleaning failed, using original HTML: ${cleaningResult.error}`);
+      // Step 1: Detect content type
+      console.log(`🔍 Detecting content type for: ${bookmark.title}`);
+      const contentType = await this.typeDetector.detectType(bookmark.url, html);
+      console.log(`📋 Content type detected: ${contentType}`);
+
+      let finalContent, preview, extractedData;
+
+      if (contentType === 'article') {
+        // Step 2A: For articles, use existing cleaning pipeline
+        console.log(`🧹 Cleaning HTML for article: ${bookmark.title}`);
+        const cleaningResult = await this.contentCleaner.cleanContent(html, bookmark.url);
+        
+        if (!cleaningResult.success) {
+          console.log(`⚠️ Cleaning failed, using original HTML: ${cleaningResult.error}`);
+        } else {
+          console.log(`✨ Cleaned HTML: ${cleaningResult.preCleaningStats.reductionPercent}% size reduction`);
+        }
+
+        // Parse with Readability using cleaned HTML
+        const cleanedHtml = cleaningResult.success ? cleaningResult.html : html;
+        const dom = new JSDOM(cleanedHtml, { url: bookmark.url });
+        const reader = new Readability(dom.window.document);
+        const article = reader.parse();
+
+        if (!article || !article.content) {
+          throw new Error('Could not extract content from page');
+        }
+
+        // Post-process the Readability content
+        const postProcessResult = await this.contentCleaner.postProcessContent(article.content, bookmark.url);
+        finalContent = postProcessResult.success ? postProcessResult.content : article.content;
+        
+        // Generate preview from final content
+        preview = this.generatePreview(finalContent);
+        
+        console.log(`📊 Content quality score: ${postProcessResult.qualityScore?.overall || 'N/A'}/100`);
+        
+        extractedData = {
+          byline: article.byline,
+          siteName: article.siteName
+        };
+        
       } else {
-        console.log(`✨ Cleaned HTML: ${cleaningResult.preCleaningStats.reductionPercent}% size reduction`);
+        // Step 2B: For non-articles, preserve original HTML and extract metadata
+        console.log(`📦 Preserving original content for ${contentType}: ${bookmark.title}`);
+        
+        // Extract type-specific metadata
+        const metadata = this.typeDetector.extractMetadata(html, contentType);
+        
+        // Store full HTML as content (for now, will be enhanced later)
+        finalContent = html;
+        preview = metadata.description || metadata.title || bookmark.title;
+        
+        extractedData = {
+          ...metadata,
+          contentType: contentType,
+          preservedHtml: true
+        };
+        
+        console.log(`📊 Extracted metadata:`, Object.keys(metadata).join(', '));
       }
-
-      // Step 2: Parse with Readability using cleaned HTML
-      const cleanedHtml = cleaningResult.success ? cleaningResult.html : html;
-      const dom = new JSDOM(cleanedHtml, { url: bookmark.url });
-      const reader = new Readability(dom.window.document);
-      const article = reader.parse();
-
-      if (!article || !article.content) {
-        throw new Error('Could not extract content from page');
-      }
-
-      // Step 3: Post-process the Readability content
-      const postProcessResult = await this.contentCleaner.postProcessContent(article.content, bookmark.url);
-      const finalContent = postProcessResult.success ? postProcessResult.content : article.content;
-      
-      // Generate preview from final content
-      const preview = this.generatePreview(finalContent);
-      
-      console.log(`📊 Content quality score: ${postProcessResult.qualityScore?.overall || 'N/A'}/100`);
 
       // Store in user_content table
       const { data: content, error: contentError } = await this.supabase
         .from('user_content')
         .insert({
           user_id: bookmark.user_id,
-          title: article.title || bookmark.title,
+          title: extractedData?.title || bookmark.title,
           content_text: finalContent,
           preview: preview,
           type: 'bookmark',
+          content_type: contentType,  // NEW: Store detected content type
           source_url: bookmark.url,
           source_hostname: new URL(bookmark.url).hostname,
           source_title: bookmark.title,
-          byline: article.byline,
-          site_name: article.siteName,
+          byline: extractedData?.byline,
+          site_name: extractedData?.siteName,
           timestamp: Date.now(),
-          is_readable: true
+          is_readable: contentType === 'article',
+          metadata: extractedData  // NEW: Store all extracted metadata
         })
         .select()
         .single();
