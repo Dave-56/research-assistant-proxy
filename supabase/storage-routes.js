@@ -2,12 +2,34 @@
 const express = require('express');
 const SupabaseStorageService = require('./storage-service');
 const { requireAuth } = require('./auth-routes');
+const PDFExtractor = require('../pdf-extractor');
 
 const router = express.Router();
 const storageService = new SupabaseStorageService();
+const pdfExtractor = new PDFExtractor();
 
 // All routes require authentication
 router.use(requireAuth);
+
+// Helper function to detect PDF URLs
+function isPDFUrl(url) {
+  if (!url) return false;
+  
+  // Direct PDF file extension check
+  if (url.toLowerCase().includes('.pdf')) {
+    return true;
+  }
+  
+  // Common PDF URL patterns
+  const pdfPatterns = [
+    /\.pdf(\?|$|#)/i,
+    /\/pdf\//i,
+    /content-type=application\/pdf/i,
+    /\.pdf&/i
+  ];
+  
+  return pdfPatterns.some(pattern => pattern.test(url));
+}
 
 // Get all content for user
 router.get('/content', async (req, res) => {
@@ -42,6 +64,64 @@ router.post('/content', async (req, res) => {
 
     if (!contentData.title) {
       return res.status(400).json({ error: 'Content title is required' });
+    }
+
+    // Check if this is a PDF URL that needs extraction
+    const sourceUrl = contentData.source?.url || contentData.url;
+    const contentText = contentData.content || contentData.text || '';
+    
+    // Detect if this is a PDF that wasn't properly extracted
+    const isPdfUrl = isPDFUrl(sourceUrl);
+    const isPdfFallback = contentText.includes('PDF content extraction is not available');
+    
+    if (isPdfUrl && isPdfFallback) {
+      console.log(`📄 Detected PDF URL in manual save: ${sourceUrl}`);
+      
+      try {
+        // Extract PDF content
+        const pdfResult = await pdfExtractor.extractFromURL(sourceUrl);
+        
+        if (pdfResult.success) {
+          console.log(`✅ PDF extracted: ${pdfResult.metadata.pages} pages, ${Math.round(pdfResult.metadata.fileSize / 1024)}KB`);
+          
+          // Replace fallback content with extracted PDF content
+          contentData.content = pdfResult.text;
+          contentData.text = pdfResult.text;
+          contentData.preview = pdfResult.preview;
+          contentData.content_type = 'pdf';
+          contentData.isReadable = true;
+          
+          // Add PDF metadata
+          contentData.metadata = {
+            contentType: 'pdf',
+            pdfInfo: {
+              pages: pdfResult.metadata.pages,
+              fileSize: pdfResult.metadata.fileSize,
+              info: pdfResult.metadata.info,
+              extractionMethod: pdfResult.metadata.extractionMethod,
+              extractedAt: new Date().toISOString()
+            }
+          };
+          
+          console.log(`📄 PDF content ready for save: ${contentData.content.length} characters`);
+        } else {
+          console.log(`⚠️ PDF extraction failed: ${pdfResult.error}`);
+          // Continue with fallback content but add error info
+          contentData.metadata = {
+            contentType: 'pdf',
+            extractionError: pdfResult.error,
+            extractionAttempted: new Date().toISOString()
+          };
+        }
+      } catch (pdfError) {
+        console.error(`❌ PDF extraction error: ${pdfError.message}`);
+        // Continue with fallback content but add error info
+        contentData.metadata = {
+          contentType: 'pdf',
+          extractionError: pdfError.message,
+          extractionAttempted: new Date().toISOString()
+        };
+      }
     }
 
     const result = await storageService.saveContent(req.user.id, contentData);
