@@ -104,58 +104,27 @@ class PDFExtractor {
       // Configure extraction options
       const extractOptions = {
         max: options.maxPages || this.maxPages,
-        // pdf-parse options with position-based formatting
+        // pdf-parse options - simple text extraction
         pagerender: (pageData) => {
           const render_options = {
-            normalizeWhitespace: false,  // Keep original spacing
-            disableCombineTextItems: true  // Get individual items with positioning
+            normalizeWhitespace: true,
+            disableCombineTextItems: false
           };
           
           return pageData.getTextContent(render_options)
             .then(textContent => {
-              // Extract items with positioning data
-              const items = textContent.items.map(item => ({
-                text: item.str.trim(),
-                x: item.transform[4],
-                y: item.transform[5],
-                width: item.width,
-                height: item.height
-              })).filter(item => item.text.length > 0);
+              let text = '';
               
-              if (items.length === 0) return '';
-              
-              // Sort by y-coordinate (top to bottom)
-              items.sort((a, b) => b.y - a.y);
-              
-              let result = '';
-              let lastY = null;
-              let baselineX = Math.min(...items.map(item => item.x));
-              
-              for (const item of items) {
-                // Detect breaks based on y-coordinate gaps
-                if (lastY !== null) {
-                  const yGap = lastY - item.y;
-                  
-                  if (yGap > 25) {  // Large gap = new paragraph
-                    result += '\n\n';
-                  } else if (yGap > 12) {  // Medium gap = new line
-                    result += '\n';
-                  } else if (result.length > 0 && !result.endsWith(' ')) {
-                    result += ' ';  // Same line, add space if needed
-                  }
-                }
+              // Simple text extraction - let LLM handle formatting
+              for (let item of textContent.items) {
+                text += item.str + ' ';
                 
-                // Add indentation based on x-coordinate
-                if (result.endsWith('\n\n') || result.endsWith('\n')) {
-                  const indent = Math.max(0, Math.floor((item.x - baselineX) / 20));
-                  result += '  '.repeat(indent);
+                if (item.hasEOL) {
+                  text += '\n';
                 }
-                
-                result += item.text;
-                lastY = item.y;
               }
               
-              return result;
+              return text;
             });
         }
       };
@@ -163,8 +132,8 @@ class PDFExtractor {
       // Extract content using pdf-parse
       const data = await pdf(pdfBuffer, extractOptions);
       
-      // Clean up extracted text
-      const cleanedText = this.cleanText(data.text);
+      // Clean up extracted text using Claude AI
+      const cleanedText = await this.cleanText(data.text);
       
       console.log(`✅ Extracted ${cleanedText.length} characters from ${data.numpages} pages`);
       
@@ -193,43 +162,79 @@ class PDFExtractor {
   }
 
   /**
-   * Light cleanup of position-based extracted text
+   * Clean extracted PDF text using Claude AI for intelligent formatting
    * @private
    */
-  cleanText(text) {
+  async cleanText(text) {
     if (!text) return '';
     
-    console.log('🧹 Light cleanup of position-formatted text...');
-    
-    const cleaned = text
-      // Remove excessive line breaks (but preserve paragraph structure)
-      .replace(/\n{4,}/g, '\n\n\n')
-      
-      // Clean up hyphenation at line breaks
-      .replace(/(\w+)-\n(\w+)/g, '$1$2')
-      
-      // Remove standalone page numbers
-      .replace(/^\s*\d+\s*$/gm, '')
-      .replace(/^Page \d+.*$/gm, '')
-      
-      // Remove common headers/footers
-      .replace(/^.{0,100}©.*$/gm, '')
-      
-      // Clean up extra spaces within lines
-      .replace(/[ \t]{2,}/g, ' ')
-      
-      // Trim each line
-      .split('\n')
-      .map(line => line.trim())
-      .join('\n')
-      
-      // Final cleanup
+    // Basic cleanup first
+    const basicCleaned = text
+      .replace(/(\w+)-\n(\w+)/g, '$1$2')  // Fix hyphenation
+      .replace(/^\s*\d+\s*$/gm, '')       // Remove page numbers
+      .replace(/^Page \d+.*$/gm, '')      // Remove page headers
+      .replace(/[ \t]{2,}/g, ' ')         // Clean extra spaces
       .trim();
-    
-    console.log(`🧹 Cleanup complete: ${text.length} → ${cleaned.length} characters`);
-    console.log(`📄 Formatted preview: "${cleaned.substring(0, 200)}..."`);
-    
-    return cleaned;
+
+    console.log('🧹 Basic cleanup complete, sending to Claude for formatting...');
+
+    // Use Claude for intelligent formatting
+    try {
+      const prompt = `Please clean and reformat this PDF text to restore proper paragraph structure and readability. The text was extracted from a PDF and may have formatting issues.
+
+Original text:
+${basicCleaned}
+
+Please:
+1. Restore proper paragraph breaks where they should naturally occur
+2. Fix any broken sentences or word spacing issues
+3. Preserve the original meaning and structure
+4. Make it read naturally while keeping all content
+5. Return only the cleaned text, no explanations
+
+Cleaned text:`;
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-3-5-haiku-20241022',
+          max_tokens: Math.min(4000, Math.ceil(text.length * 1.5)), // Allow some expansion
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Claude API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const cleanedText = data.content[0].text.trim();
+      
+      console.log(`🤖 Claude formatting complete: ${text.length} → ${cleanedText.length} characters`);
+      console.log(`📄 Claude preview: "${cleanedText.substring(0, 200)}..."`);
+      
+      return cleanedText;
+
+    } catch (error) {
+      console.error('❌ Claude formatting failed:', error.message);
+      console.log('🔄 Falling back to basic cleanup');
+      
+      // Fallback to basic cleanup if Claude fails
+      const fallback = basicCleaned
+        .replace(/\n{3,}/g, '\n\n')
+        .split('\n\n')
+        .map(para => para.trim().replace(/\s+/g, ' '))
+        .filter(para => para.length > 10)
+        .join('\n\n');
+      
+      console.log(`🧹 Fallback cleanup complete: ${text.length} → ${fallback.length} characters`);
+      return fallback;
+    }
   }
 
   /**
