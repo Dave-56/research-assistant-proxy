@@ -180,19 +180,11 @@ class PDFExtractor {
 
     // Use Claude for intelligent formatting
     try {
-      const prompt = `Please clean and reformat this PDF text to restore proper paragraph structure and readability. The text was extracted from a PDF and may have formatting issues.
+      const prompt = `Clean this PDF text by fixing formatting issues and restoring paragraph breaks. Do NOT summarize or add commentary - preserve ALL original content exactly.
 
-Original text:
 ${basicCleaned}
 
-Please:
-1. Restore proper paragraph breaks where they should naturally occur
-2. Fix any broken sentences or word spacing issues
-3. Preserve the original meaning and structure
-4. Make it read naturally while keeping all content
-5. Return only the cleaned text, no explanations
-
-Cleaned text:`;
+IMPORTANT: Return ONLY the cleaned text with proper paragraph breaks. Do not add any explanations, introductions, or commentary. Start directly with the cleaned content.`;
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
