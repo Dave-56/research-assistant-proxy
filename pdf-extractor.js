@@ -164,26 +164,72 @@ class PDFExtractor {
   }
 
   /**
-   * Clean extracted text
+   * Clean extracted PDF text and preserve readable formatting
    * @private
    */
   cleanText(text) {
     if (!text) return '';
     
-    return text
-      // Remove excessive whitespace
-      .replace(/\s+/g, ' ')
-      // Preserve paragraph breaks
-      .replace(/\n\s*\n/g, '\n\n')
+    console.log('🧹 Cleaning PDF text for better readability...');
+    
+    let cleaned = text
+      // Fix broken words (e.g., "sam e" → "same", "optimis tic" → "optimistic")
+      .replace(/\b([a-z]+)\s+([a-z]{1,3})\b/g, (match, word1, word2) => {
+        // Only merge if second part is very short (likely a broken word)
+        if (word2.length <= 3) {
+          return word1 + word2;
+        }
+        return match;
+      })
+      
+      // Fix punctuation spacing (e.g., "other?I" → "other? I", "minutes," → "minutes, ")
+      .replace(/([.!?,:;])([A-Z])/g, '$1 $2')
+      .replace(/([.!?])([a-z])/g, '$1 $2')
+      
+      // Add paragraph breaks before likely new paragraphs (capital after period + space)
+      .replace(/(\. )([A-Z][a-z]{3,})/g, '$1\n\n$2')
+      
+      // Fix missing spaces after periods/commas
+      .replace(/([.!?])([a-zA-Z])/g, '$1 $2')
+      .replace(/,([a-zA-Z])/g, ', $1')
+      
+      // Remove excessive whitespace but preserve intentional line breaks
+      .replace(/[ \t]+/g, ' ')
+      
+      // Clean up multiple line breaks
+      .replace(/\n{3,}/g, '\n\n')
+      
       // Remove page numbers (common patterns)
-      .replace(/^\d+\s*$/gm, '')
+      .replace(/^\s*\d+\s*$/gm, '')
       .replace(/^Page \d+.*$/gm, '')
+      
       // Remove common headers/footers
       .replace(/^.{0,100}©.*$/gm, '') // Copyright lines
+      
       // Clean up hyphenation at line breaks
       .replace(/(\w+)-\n(\w+)/g, '$1$2')
-      // Trim
+      
+      // Add space after sentence-ending punctuation if missing
+      .replace(/([.!?])([A-Z])/g, '$1 $2')
+      
+      // Fix common OCR artifacts
+      .replace(/\bl\b/g, 'I') // Standalone 'l' is usually 'I'
+      .replace(/\b0\b/g, 'O') // Standalone '0' is usually 'O' in text
+      
+      // Trim and clean up
       .trim();
+    
+    // Split into paragraphs and clean each one
+    const paragraphs = cleaned.split('\n\n').map(para => 
+      para.trim().replace(/\s+/g, ' ')
+    ).filter(para => para.length > 10); // Remove very short paragraphs
+    
+    const result = paragraphs.join('\n\n');
+    
+    console.log(`🧹 Text cleaning complete: ${text.length} → ${result.length} characters`);
+    console.log(`📄 Cleaned preview: "${result.substring(0, 200)}..."`);
+    
+    return result;
   }
 
   /**
