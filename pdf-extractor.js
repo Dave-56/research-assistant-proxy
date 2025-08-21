@@ -177,14 +177,37 @@ class PDFExtractor {
       .trim();
 
     console.log('🧹 Basic cleanup complete, sending to Claude for formatting...');
+    console.log('📊 Input text stats:', {
+      length: basicCleaned.length,
+      lines: basicCleaned.split('\n').length,
+      preview: basicCleaned.substring(0, 200) + '...',
+      lastPart: '...' + basicCleaned.substring(basicCleaned.length - 200)
+    });
 
-    // Use Claude for intelligent formatting
+    // Use Claude for intelligent formatting with new approach
     try {
-      const prompt = `Clean this PDF text by fixing formatting issues and restoring paragraph breaks. Do NOT summarize or add commentary - preserve ALL original content exactly.
+      const prompt = `You are a text formatter. Your job is to add paragraph breaks to this text that was extracted from a PDF. The text is currently all run together but should have proper paragraph breaks.
 
+RULES:
+1. Output EVERY SINGLE WORD from the input - do not remove, summarize, or skip anything
+2. Only add paragraph breaks (\\n\\n) where natural breaks should occur
+3. Do not change any words or content
+4. Do not add any commentary like "Text continues..." or similar
+5. If you see repetitive content, output ALL of it - do not summarize
+
+INPUT TEXT:
 ${basicCleaned}
 
-IMPORTANT: Return ONLY the cleaned text with proper paragraph breaks. Do not add any explanations, introductions, or commentary. Start directly with the cleaned content.`;
+FORMATTED OUTPUT:`;
+
+      // Smart token calculation based on input size
+      const inputTokens = Math.ceil(basicCleaned.length / 4); // Rough estimate: 4 chars = 1 token
+      const maxTokens = Math.min(
+        100000, // Claude Haiku's max context
+        Math.max(8000, inputTokens * 1.3) // Input size + 30% buffer for formatting
+      );
+
+      console.log(`🧮 Token calculation: input ~${inputTokens} tokens, setting max_tokens to ${maxTokens}`);
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -195,7 +218,7 @@ IMPORTANT: Return ONLY the cleaned text with proper paragraph breaks. Do not add
         },
         body: JSON.stringify({
           model: 'claude-3-5-haiku-20241022',
-          max_tokens: Math.min(4000, Math.ceil(text.length * 1.5)), // Allow some expansion
+          max_tokens: maxTokens,
           messages: [{ role: 'user', content: prompt }]
         })
       });
@@ -207,8 +230,15 @@ IMPORTANT: Return ONLY the cleaned text with proper paragraph breaks. Do not add
       const data = await response.json();
       const cleanedText = data.content[0].text.trim();
       
-      console.log(`🤖 Claude formatting complete: ${text.length} → ${cleanedText.length} characters`);
-      console.log(`📄 Claude preview: "${cleanedText.substring(0, 200)}..."`);
+      console.log(`🤖 Claude formatting complete: ${basicCleaned.length} → ${cleanedText.length} characters`);
+      console.log(`📄 Claude output preview: "${cleanedText.substring(0, 200)}..."`);
+      console.log(`📄 Claude output ending: "...${cleanedText.substring(cleanedText.length - 200)}"`);
+      console.log('📊 Output stats:', {
+        inputLength: basicCleaned.length,
+        outputLength: cleanedText.length,
+        compressionRatio: (cleanedText.length / basicCleaned.length * 100).toFixed(1) + '%',
+        linesAdded: cleanedText.split('\n').length - basicCleaned.split('\n').length
+      });
       
       return cleanedText;
 
